@@ -1,0 +1,28 @@
+# You can do magic here to get the passwords you need, e.g. communicate with
+# Gnome Keyring.
+
+imapPasswordScript = os.path.expanduser("~/.imap-passwords")
+#######################################################
+# Adjust this to get a copy of the passwords you need #
+#######################################################
+password = subprocess.check_output([
+    imapPasswordScript,
+    "get",
+    "user",
+    "host"]).strip().decode("UTF-8")
+
+certfile = os.path.expanduser("~/.mailcert.pem")
+
+##################################################
+# Add a line for each folder you want to monitor #
+##################################################
+accounts = [
+    ([q, "name", "host", certfile, "user", password, "INBOX"],
+     {"port": 1143, "security": "explicit-ssl"}),
+    ([q, "name", "host", certfile, "user", password, "Folder"],
+     {"port": 1143, "security": "explicit-ssl"}),
+    ([q, "name", "host", certfile, "user", password, "INBOX"],
+     {"security": "starttls"}),
+    ([q, "name", "host", certfile, "user", password, "Folder"],
+     {"security": "starttls"}),
+]
