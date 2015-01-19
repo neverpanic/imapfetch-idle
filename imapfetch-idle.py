@@ -30,7 +30,6 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-from imaplib2 import imaplib2
 from threading import *
 from queue import *
 from OpenSSL import crypto
@@ -41,6 +40,10 @@ import ssl
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                'imaplib2', 'imaplib2'))
+import imaplib2
 
 TIMEOUT_MINUTES = 3
 
@@ -53,8 +56,10 @@ class IMAPSocket():
     def __init__(self, queue, name, server, certfile, user, passwd, directory,
                  security=STARTTLS, port=143):
         self.thread = Thread(target=self.idle)
-        self.localEv = Event()
         self.globalQ = queue
+        self.localEv = Event()
+        self.deathpill = False
+        self.connected = False
 
         self.name = name
         self.server = server
@@ -65,29 +70,32 @@ class IMAPSocket():
         self.security = security
         self.port = port
 
+    def verifyCertificate(self, peercert, host):
+        peerX509 = crypto.load_certificate(crypto.FILETYPE_ASN1,
+                                           peercert)
+        with open(self.certfile, "r") as cert:
+            localX509 = crypto.load_certificate(crypto.FILETYPE_PEM,
+                                                cert.read())
+
+        if peerX509.get_subject() != localX509.get_subject():
+            return "Subjects don't match"
+        if peerX509.digest("sha1") != localX509.digest("sha1"):
+            return "Digests don't match"
+        return None
+
     def connect(self):
-        def verifyCertificate(peercert, host):
-            peerX509 = crypto.load_certificate(crypto.FILETYPE_ASN1, peercert)
-            with open(self.certfile, "r") as cert:
-                localX509 = crypto.load_certificate(crypto.FILETYPE_PEM,
-                                                    cert.read())
-
-            if peerX509.get_subject() != localX509.get_subject():
-                return "Subjects don't match"
-            if peerX509.digest("sha1") != localX509.digest("sha1"):
-                return "Digests don't match"
-            return None
-
         try:
             if self.security == STARTTLS:
-                self.M = imaplib2.IMAP4(self.server, self.port, timeout=20)
-                self.M.starttls(ca_certs=None,
-                                cert_verify_cb=verifyCertificate)
+                self.M = imaplib2.IMAP4(self.server, self.port,
+                                        timeout=20)
+                self.M.starttls(
+                    ca_certs=None, cert_verify_cb=self.verifyCertificate,
+                    ssl_version="tls1")
             elif self.security == EXPLICIT_SSL:
-                self.M = imaplib2.IMAP4_SSL(self.server, self.port,
-                                            ca_certs=None,
-                                            cert_verify_cb=verifyCertificate,
-                                            timeout=20)
+                self.M = imaplib2.IMAP4_SSL(
+                    self.server, self.port, ca_certs=None,
+                    cert_verify_cb=self.verifyCertificate, ssl_version="tls1",
+                    timeout=20)
             else:
                 raise Exception("Unsupported security method. Refusing to go"
                                 " unencrypted.")
@@ -106,85 +114,69 @@ class IMAPSocket():
                                 status=status,
                                 msgs=msgs))
 
+        self.connected = True
+
     def start(self):
         self.thread.start()
 
     def stop(self):
+        self.deathpill = True
         self.localEv.set()
 
     def join(self):
         self.thread.join()
-        #self.M.close()
-        #self.M.logout()
 
     def idle(self):
-        # connect
-        try:
-            self.connect()
-        except Exception as e:
-            print("Error connecting to {}:{}: {!s}"
-                  .format(self.name, self.directory, e), file=sys.stderr)
-            return
-
-        # and idle
-        while True:
-            if self.localEv.isSet():
-                # death pill received
-                return
-            self.needsync = False
-
-            def callback(args):
-                if not self.localEv.isSet():
-                    self.needsync = True
-                    self.localEv.set()
-
-            print("Idling on {}, mailbox {}...".format(self.name,
-                                                       self.directory))
-            try:
-                self.M.idle(callback=callback)
-            except imaplib2.IMAP4.abort as e:
-                print("Connection to {}:{} terminated unexpectedly, "
-                      "reconnecting: {!s}".format(self.name, self.directory,
-                                                  e))
-                # connect
+        while not self.deathpill:
+            if not self.connected:
                 try:
                     self.connect()
                 except Exception as e:
                     print("Error connecting to {}:{}: {!s}"
-                          .format(self.name, self.directory, e), file=sys.stderr)
+                          .format(self.name, self.directory, e),
+                          file=sys.stderr)
                     return
 
-                # re-connect successful, re-try
-                continue
-            self.localEv.wait()
+            print("Idling on {}, mailbox {}...".format(self.name,
+                                                       self.directory))
 
-            # If we arrive here, an idle event happened or the death pill was
-            # sent. needsync tells us which one.
-            if self.needsync:
-                res = self.M.recent()
-                numNewMails = 0
-                if res:
-                    numNewMails = sum(map(
-                        lambda x: 1 if (x and x != '0') else 0,
-                        res[1]))
-                if numNewMails > 0:
-                    print("Idle event on {}:{}, res is {!r}".format(
-                        self.name, self.directory, res))
-                    print("Found new mail ({:d} mails) on {}, mailbox"
-                          " {}".format(numNewMails, self.name, self.directory))
-                    self.globalQ.put((self.name, self.directory))
-                self.localEv.clear()
-            else:
-                # death pill
+            def callback(args):
+                self.localEv.set()
+
+            try:
+                # This will return immediately and run IDLE asynchronously.
+                self.M.idle(callback=callback)
+            except imaplib2.IMAP4.abort as e:
+                if self.deathpill:
+                    return
+
+                print("Connection to {}:{} terminated unexpectedly: "
+                      "{!s}".format(self.name, self.directory, e))
+                self.connected = False
+
+            # Wait for the IMAP command to complete, or the stop() method being
+            # called.
+            self.localEv.wait()
+            self.localEv.clear()
+
+            if self.deathpill:
                 return
 
+            res = self.M.recent()
+            numNewMails = 0
+            if res:
+                numNewMails = sum(map(lambda x: 1 if (x and x != '0') else 0,
+                                  res[1]))
+            if numNewMails > 0:
+                print("Found new mail ({:d} mails) on {}, mailbox"
+                      " {}".format(numNewMails, self.name, self.directory))
+                self.globalQ.put((self.name, self.directory))
 
 if __name__ == '__main__':
     from local import accounts
 
     mbsync = '/usr/bin/mbsync'
 
-    ev = Event()
     q = Queue()
 
     sockets = []
@@ -248,8 +240,10 @@ if __name__ == '__main__':
                 subprocess.call([
                     '/usr/bin/notify-send', '-i', 'indicator-messages-new',
                     'New Mail', 'in mailbox {}'.format(', '.join(boxes))])
+    except KeyboardInterrupt as ki:
+        print("^C received, shutting down...", file=sys.stderr)
     finally:
-        # Clean up
         for sock in sockets:
             sock.stop()
+        for sock in sockets:
             sock.join()
