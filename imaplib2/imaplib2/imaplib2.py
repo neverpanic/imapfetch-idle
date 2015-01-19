@@ -487,7 +487,7 @@ class IMAP4(object):
             raise socket.sslerror("imaplib2 SSL mode does not work without ssl module")
 
         if self.cert_verify_cb is not None:
-            cert_err = self.cert_verify_cb(self.sock.getpeercert(), self.host)
+            cert_err = self.cert_verify_cb(self.sock.getpeercert(binary_form=True), self.host)
             if cert_err:
                 raise ssl_exc(cert_err)
 
