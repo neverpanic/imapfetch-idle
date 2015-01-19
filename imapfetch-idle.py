@@ -173,7 +173,7 @@ class IMAPSocket():
                 self.globalQ.put((self.name, self.directory))
 
 if __name__ == '__main__':
-    from local import accounts
+    import config
 
     mbsync = '/usr/bin/mbsync'
 
@@ -182,9 +182,9 @@ if __name__ == '__main__':
     sockets = []
 
     try:
-        for account in local.accounts:
+        for account in config.accounts:
             try:
-                sockets.append(IMAPSocket(*account[0], **account[1]))
+                sockets.append(IMAPSocket(q, *account[0], **account[1]))
             except Exception as e:
                 print("Error connecting to account {!s}/{!s}: {}"
                       .format(account[0][1], account[0][-1], e),

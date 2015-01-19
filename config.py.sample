@@ -17,12 +17,12 @@ certfile = os.path.expanduser("~/.mailcert.pem")
 # Add a line for each folder you want to monitor #
 ##################################################
 accounts = [
-    ([q, "name", "host", certfile, "user", password, "INBOX"],
+    (["name", "host", certfile, "user", password, "INBOX"],
      {"port": 1143, "security": "explicit-ssl"}),
-    ([q, "name", "host", certfile, "user", password, "Folder"],
+    (["name", "host", certfile, "user", password, "Folder"],
      {"port": 1143, "security": "explicit-ssl"}),
-    ([q, "name", "host", certfile, "user", password, "INBOX"],
+    (["name", "host", certfile, "user", password, "INBOX"],
      {"security": "starttls"}),
-    ([q, "name", "host", certfile, "user", password, "Folder"],
+    (["name", "host", certfile, "user", password, "Folder"],
      {"security": "starttls"}),
 ]
