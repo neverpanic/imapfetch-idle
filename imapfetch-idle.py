@@ -239,7 +239,9 @@ if __name__ == '__main__':
             if len(boxes) > 0:
                 subprocess.call([
                     '/usr/bin/notify-send', '-i', 'indicator-messages-new',
-                    'New Mail', 'in mailbox {}'.format(', '.join(boxes))])
+                    'New Mail', 'in mailbox{} {}'.format(
+                        'es' if len(boxes) > 1 else '',
+                        ', '.join(boxes))])
     except KeyboardInterrupt as ki:
         print("^C received, shutting down...", file=sys.stderr)
     finally:
