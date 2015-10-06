@@ -1,3 +1,6 @@
+import os
+import subprocess
+
 # You can do magic here to get the passwords you need, e.g. communicate with
 # Gnome Keyring.
 
